@@ -4,7 +4,7 @@
     .align 4
 
 // =========================================================
-// MACROS CHO PACK/UNPACK (Đã nâng cấp lên 128-bit Lane Width)
+// MACROS CƠ SỞ (Giữ nguyên từ bản gốc)
 // =========================================================
 .macro bfly_step vA, vB, vMask, step, vTmp1, vTmp2
     ushr \vTmp1\().2d, \vA\().2d, #\step
@@ -53,9 +53,6 @@
     mov \r7\().16b, v23.16b
 .endm
 
-// =========================================================
-// MACROS CHO S-BOX GF(16) (Nâng cấp toàn bộ lên .16b)
-// =========================================================
 .macro map_M o3, o2, o1, o0, i3, i2, i1, i0
     eor \o3\().16b, \i2\().16b, \i1\().16b
     eor \o2\().16b, \i3\().16b, \o3\().16b
@@ -121,9 +118,6 @@
     bsl \res\().16b, \a\().16b, \b\().16b
 .endm
 
-// ==========================================
-// MACROS CHO MIXWORD
-// ==========================================
 .macro neon_xtime o0, o1, o2, o3, i0, i1, i2, i3, hb, tmp
     dup \hb\().2d, \i3\().d[1]
     ext \o0\().16b, \hb\().16b, \i0\().16b, #8
@@ -137,14 +131,13 @@
     eor \o2\().16b, \o2\().16b, \tmp\().16b
 .endm
 
+
 // =========================================================
-// PACK / UNPACK (Xử lý đồng thời 8 khối 128-bit = 128 Bytes)
+// INLINED MACROS (THỰC THI TRỰC TIẾP TRÊN THANH GHI V0-V7)
+// Sử dụng các macro này trong vòng lặp mã hóa hội tụ của bạn
 // =========================================================
-    .global pack_neon
-    .type pack_neon, %function
-pack_neon:
-    ld1 {v0.16b-v3.16b}, [x0], #64
-    ld1 {v4.16b-v7.16b}, [x0]
+
+.macro pack_neon
     transpose_8x8_bytes_128 v0, v1, v2, v3, v4, v5, v6, v7
     movi v24.16b, #0x55
     movi v25.16b, #0x33
@@ -161,15 +154,9 @@ pack_neon:
     bfly_step v1, v5, v26, 4, v28, v29
     bfly_step v2, v6, v26, 4, v28, v29
     bfly_step v3, v7, v26, 4, v28, v29
-    st1 {v0.16b-v3.16b}, [x1], #64
-    st1 {v4.16b-v7.16b}, [x1]
-    ret
+.endm
 
-    .global unpack_neon
-    .type unpack_neon, %function
-unpack_neon:
-    ld1 {v0.16b-v3.16b}, [x0], #64
-    ld1 {v4.16b-v7.16b}, [x0]
+.macro unpack_neon
     movi v24.16b, #0x55
     movi v25.16b, #0x33
     movi v26.16b, #0x0F
@@ -186,25 +173,9 @@ unpack_neon:
     bfly_step v2, v6, v26, 4, v28, v29
     bfly_step v3, v7, v26, 4, v28, v29
     transpose_8x8_bytes_128 v0, v1, v2, v3, v4, v5, v6, v7
-    st1 {v0.16b-v3.16b}, [x1], #64
-    st1 {v4.16b-v7.16b}, [x1]
-    ret
+.endm
 
-// =========================================================
-// S-BOX BITSCLICED NEON (8 Blocks Parallel Execution)
-// =========================================================
-    .global sbox_bs_neon
-    .type sbox_bs_neon, %function
-sbox_bs_neon:
-    stp d8, d9, [sp, #-64]!
-    stp d10, d11, [sp, #16]
-    stp d12, d13, [sp, #32]
-    stp d14, d15, [sp, #48]
-
-    ld1 {v0.16b-v3.16b}, [x0]
-    add x8, x0, #64
-    ld1 {v4.16b-v7.16b}, [x8]
-
+.macro sbox_bs
     map_M v8, v9, v10, v11, v3, v2, v1, v0
     map_M v12, v13, v14, v15, v7, v6, v5, v4
 
@@ -241,31 +212,9 @@ sbox_bs_neon:
     map_M_inv v3, v2, v1, v0, v16, v17, v18, v19
 
     mvn v0.16b, v0.16b
+.endm
 
-    st1 {v0.16b-v3.16b}, [x0]
-    st1 {v4.16b-v7.16b}, [x8]
-
-    ldp d14, d15, [sp, #48]
-    ldp d12, d13, [sp, #32]
-    ldp d10, d11, [sp, #16]
-    ldp d8, d9, [sp], #64
-    ret
-
-// =========================================================
-// INV S-BOX BITSCLICED NEON (8 Blocks Parallel Execution)
-// =========================================================
-    .global inv_sbox_bs_neon
-    .type inv_sbox_bs_neon, %function
-inv_sbox_bs_neon:
-    stp d8, d9, [sp, #-64]!
-    stp d10, d11, [sp, #16]
-    stp d12, d13, [sp, #32]
-    stp d14, d15, [sp, #48]
-
-    ld1 {v0.16b-v3.16b}, [x0]
-    add x8, x0, #64
-    ld1 {v4.16b-v7.16b}, [x8]
-
+.macro inv_sbox_bs
     mvn v0.16b, v0.16b
     map_M v16, v17, v18, v19, v3, v2, v1, v0
     map_M v8, v9, v10, v11, v7, v6, v5, v4
@@ -307,51 +256,34 @@ inv_sbox_bs_neon:
     map_M_inv v11, v10, v9, v8, v0, v1, v2, v3
     map_M_inv v15, v14, v13, v12, v4, v5, v6, v7
 
-    st1 {v12.16b-v15.16b}, [x0]
-    st1 {v8.16b-v11.16b}, [x8]
+    // QUAN TRỌNG: Đẩy lại kết quả từ v8-v15 về đúng chuẩn pipeline v0-v7
+    mov v0.16b, v12.16b
+    mov v1.16b, v13.16b
+    mov v2.16b, v14.16b
+    mov v3.16b, v15.16b
+    mov v4.16b, v8.16b
+    mov v5.16b, v9.16b
+    mov v6.16b, v10.16b
+    mov v7.16b, v11.16b
+.endm
 
-    ldp d14, d15, [sp, #48]
-    ldp d12, d13, [sp, #32]
-    ldp d10, d11, [sp, #16]
-    ldp d8, d9, [sp], #64
-    ret
+.macro mixword
+    trn1 v16.2d, v0.2d, v1.2d
+    trn2 v17.2d, v0.2d, v1.2d
+    trn1 v18.2d, v2.2d, v3.2d
+    trn2 v19.2d, v2.2d, v3.2d
+    trn1 v20.2d, v4.2d, v5.2d
+    trn2 v21.2d, v4.2d, v5.2d
+    trn1 v22.2d, v6.2d, v7.2d
+    trn2 v23.2d, v6.2d, v7.2d
 
-// =========================================================
-// MIXWORD NEON (Layout-Aware Dual-Group 128-bit Matrix Rotation)
-// =========================================================
-    .global mixword_neon
-    .type mixword_neon, %function
-mixword_neon:
-    stp d8, d9, [sp, #-64]!
-    stp d10, d11, [sp, #16]
-    stp d12, d13, [sp, #32]
-    stp d14, d15, [sp, #48]
-
-    // Tải 128 bytes dữ liệu (8 khối bitslices rộng 128-bit)
-    ld1 {v0.16b-v3.16b}, [x0]
-    add x8, x0, #64
-    ld1 {v4.16b-v7.16b}, [x8]
-
-    // Transpose phân tách thành Nhóm 1 (Khối 0-3) và Nhóm 2 (Khối 4-7)
-    trn1 v16.2d, v0.2d, v1.2d  // Nhóm 1, thanh ghi 0
-    trn2 v17.2d, v0.2d, v1.2d  // Nhóm 2, thanh ghi 0
-    trn1 v18.2d, v2.2d, v3.2d  // Nhóm 1, thanh ghi 1
-    trn2 v19.2d, v2.2d, v3.2d  // Nhóm 2, thanh ghi 1
-    trn1 v20.2d, v4.2d, v5.2d  // Nhóm 1, thanh ghi 2
-    trn2 v21.2d, v4.2d, v5.2d  // Nhóm 2, thanh ghi 2
-    trn1 v22.2d, v6.2d, v7.2d  // Nhóm 1, thanh ghi 3
-    trn2 v23.2d, v6.2d, v7.2d  // Nhóm 2, thanh ghi 3
-
-    // Cấp phát Stack lưu trữ kết quả trung gian để tránh tràn thanh ghi
+    // Khởi tạo vùng nhớ tạm (Dùng Sp cho MixWord là chuẩn vì tính toán vượt quá số lượng 32 Register)
     sub sp, sp, #128
-
-    // SAO LƯU NHÓM 2 VÀO STACK ĐỂ TRÁNH BỊ GHI ĐÈ TRONG KHI XỬ LÝ NHÓM 1
     str q17, [sp, #64]
     str q19, [sp, #80]
     str q21, [sp, #96]
     str q23, [sp, #112]
 
-    // --- XỬ LÝ NHÓM 1 (Khối 0-3) ---
     mov v0.16b, v16.16b
     mov v1.16b, v18.16b
     mov v2.16b, v20.16b
@@ -537,17 +469,13 @@ mixword_neon:
     orr v15.16b, v15.16b, v27.16b
     orr v16.16b, v16.16b, v28.16b
 
-    // Đẩy kết quả đầu ra Nhóm 1 vào Stack (Vị trí 0->64 bytes)
     st1 {v13.16b-v16.16b}, [sp]
 
-    // --- XỬ LÝ NHÓM 2 (Khối 4-7) ---
-    // Khôi phục an toàn dữ liệu đầu vào Nhóm 2 từ Stack vào v0-v3
     ldr q0, [sp, #64]
     ldr q1, [sp, #80]
     ldr q2, [sp, #96]
     ldr q3, [sp, #112]
 
-    // Chạy lại khối xử lý logic MixWord trên Nhóm 2
     mov x9, #0x1111111111111111
     dup v4.2d, x9
 
@@ -728,17 +656,14 @@ mixword_neon:
     orr v15.16b, v15.16b, v27.16b
     orr v16.16b, v16.16b, v28.16b
 
-    // Gán đầu ra Nhóm 2 sang v28-v31
     mov v28.16b, v13.16b
     mov v29.16b, v14.16b
     mov v30.16b, v15.16b
     mov v31.16b, v16.16b
 
-    // Đọc ngược kết quả đầu ra Nhóm 1 từ Stack vào v24-v27
     ld1 {v24.16b-v27.16b}, [sp]
     add sp, sp, #128
 
-    // Untranspose: Gom ngược Nhóm 1 và Nhóm 2 về cấu trúc Bitslices 128-bit
     trn1 v0.2d, v24.2d, v28.2d
     trn2 v1.2d, v24.2d, v28.2d
     trn1 v2.2d, v25.2d, v29.2d
@@ -747,32 +672,9 @@ mixword_neon:
     trn2 v5.2d, v26.2d, v30.2d
     trn1 v6.2d, v27.2d, v31.2d
     trn2 v7.2d, v27.2d, v31.2d
+.endm
 
-    // Lưu kết quả cuối cùng ngược lại bộ nhớ
-    st1 {v0.16b-v3.16b}, [x0]
-    st1 {v4.16b-v7.16b}, [x8]
-
-    ldp d14, d15, [sp, #48]
-    ldp d12, d13, [sp, #32]
-    ldp d10, d11, [sp, #16]
-    ldp d8, d9, [sp], #64
-    ret
-
-// =========================================================
-// INV MIXWORD NEON (Layout-Aware Dual-Group 128-bit Matrix Rotation)
-// =========================================================
-    .global inv_mixword_neon
-    .type inv_mixword_neon, %function
-inv_mixword_neon:
-    stp d8, d9, [sp, #-64]!
-    stp d10, d11, [sp, #16]
-    stp d12, d13, [sp, #32]
-    stp d14, d15, [sp, #48]
-
-    ld1 {v0.16b-v3.16b}, [x0]
-    add x8, x0, #64
-    ld1 {v4.16b-v7.16b}, [x8]
-
+.macro inv_mixword
     trn1 v16.2d, v0.2d, v1.2d
     trn2 v17.2d, v0.2d, v1.2d
     trn1 v18.2d, v2.2d, v3.2d
@@ -783,14 +685,11 @@ inv_mixword_neon:
     trn2 v23.2d, v6.2d, v7.2d
 
     sub sp, sp, #128
-
-    // SAO LƯU NHÓM 2 VÀO STACK ĐỂ TRÁNH BỊ GHI ĐÈ TRONG KHI XỬ LÝ NHÓM 1
     str q17, [sp, #64]
     str q19, [sp, #80]
     str q21, [sp, #96]
     str q23, [sp, #112]
 
-    // --- XỬ LÝ INV MIXWORD NHÓM 1 ---
     mov v0.16b, v16.16b
     mov v1.16b, v18.16b
     mov v2.16b, v20.16b
@@ -947,8 +846,6 @@ inv_mixword_neon:
 
     st1 {v8.16b-v11.16b}, [sp]
 
-    // --- XỬ LÝ INV MIXWORD NHÓM 2 ---
-    // Khôi phục dữ liệu gốc Nhóm 2 từ Stack vào v0-v3
     ldr q0, [sp, #64]
     ldr q1, [sp, #80]
     ldr q2, [sp, #96]
@@ -1103,12 +1000,12 @@ inv_mixword_neon:
     orr v10.16b, v10.16b, v22.16b
     orr v11.16b, v11.16b, v23.16b
 
+    // ===== PHẦN FIX LỖI BỊ CẮT CỤT MÃ Ở CUỐI =====
     mov v28.16b, v8.16b
     mov v29.16b, v9.16b
     mov v30.16b, v10.16b
     mov v31.16b, v11.16b
 
-    // Đọc ngược kết quả đầu ra Nhóm 1 từ Stack vào v24-v27
     ld1 {v24.16b-v27.16b}, [sp]
     add sp, sp, #128
 
@@ -1120,11 +1017,84 @@ inv_mixword_neon:
     trn2 v5.2d, v26.2d, v30.2d
     trn1 v6.2d, v27.2d, v31.2d
     trn2 v7.2d, v27.2d, v31.2d
+.endm
 
+// =========================================================
+// HÀM FULL ENCRYPT/DECRYPT (C-CALLABLE)
+// Gọi 1 lần duy nhất, thực hiện toàn bộ các vòng lặp
+// x0: con trỏ dữ liệu (data pointer)
+// x1: số vòng lặp (num_rounds)
+// =========================================================
+
+    .global encrypt_neon
+    .type encrypt_neon, %function
+encrypt_neon:
+    // Lưu các thanh ghi callee-saved (d8-d15)
+    stp d8, d9, [sp, #-64]!
+    stp d10, d11, [sp, #16]
+    stp d12, d13, [sp, #32]
+    stp d14, d15, [sp, #48]
+
+    // 1. Load dữ liệu
+    ld1 {v0.16b-v3.16b}, [x0]
+    add x8, x0, #64
+    ld1 {v4.16b-v7.16b}, [x8]
+    
+    // 2. Pack (Chỉ làm 1 lần)
+    pack_neon
+    
+    // 3. Vòng lặp các Round
+    cmp x1, #0
+    b.eq loop_end_enc
+loop_start_enc:
+    sbox_bs
+    mixword
+    sub x1, x1, #1
+    cbnz x1, loop_start_enc
+
+loop_end_enc:
+    // 4. Unpack (Chỉ làm 1 lần)
+    unpack_neon
+    
+    // 5. Lưu kết quả
     st1 {v0.16b-v3.16b}, [x0]
     st1 {v4.16b-v7.16b}, [x8]
 
-    // PHẦN VÁ KHÔI PHỤC EPILOGUE HOÀN CHỈNH
+    // Restore thanh ghi và return
+    ldp d14, d15, [sp, #48]
+    ldp d12, d13, [sp, #32]
+    ldp d10, d11, [sp, #16]
+    ldp d8, d9, [sp], #64
+    ret
+
+    .global decrypt_neon
+    .type decrypt_neon, %function
+decrypt_neon:
+    stp d8, d9, [sp, #-64]!
+    stp d10, d11, [sp, #16]
+    stp d12, d13, [sp, #32]
+    stp d14, d15, [sp, #48]
+
+    ld1 {v0.16b-v3.16b}, [x0]
+    add x8, x0, #64
+    ld1 {v4.16b-v7.16b}, [x8]
+    
+    pack_neon
+    
+    cmp x1, #0
+    b.eq loop_end_dec
+loop_start_dec:
+    inv_mixword
+    inv_sbox_bs
+    sub x1, x1, #1
+    cbnz x1, loop_start_dec
+
+loop_end_dec:
+    unpack_neon
+    
+    st1 {v0.16b-v3.16b}, [x0]
+    st1 {v4.16b-v7.16b}, [x8]
+
     ldp d14, d15, [sp, #48]
     ldp d12, d13, [sp, #32]
     ldp d10, d11, [sp, #16]

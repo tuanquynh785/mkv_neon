@@ -1,3 +1,4 @@
+// mkv-neonbs-glue.c
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -22,6 +23,9 @@ extern void sbox_bs_neon(bs_block *blk);
 extern void inv_sbox_bs_neon(bs_block *blk);
 extern void mixword_neon(bs_block *blk);
 extern void inv_mixword_neon(bs_block *blk);
+
+extern void encrypt_neon(uint8_t* data, int num_rounds);
+extern void decrypt_neon(uint8_t* data, int num_rounds);
 
 // =========================================================
 // THUẬT TOÁN C THAM CHIẾU (128-BIT) ĐỂ DEBUG ASM
@@ -74,10 +78,8 @@ void unpack128_c(const bs_block *in, uint8_t *out) {
     }
 }
 
-// =========================================================
-// MAIN VERIFICATION PIPELINE
-// =========================================================
-int main() {
+
+void test() {
     #define ITERATIONS 2000000 // 2 triệu vòng lặp
 
     // 128 bytes Input
@@ -108,85 +110,98 @@ int main() {
     __attribute__((aligned(16))) uint8_t OUT_BWD[128];
     bs_block blk;
 
-    printf("=== NEON KERNEL PIPELINE VERIFICATION (128-BIT LANES) ===\n\n");
+	// Luôn luôn align 16-bytes cho NEON
+    uint8_t data[128] __attribute__((aligned(16)));
+    int rounds = 1; // Ví dụ 10 vòng
 
-    // =========================================================
-    // 1. FORWARD PIPELINE (MÃ HOÁ)
-    // data_in -> pack -> sbox -> mixword -> unpack -> OUT_FWD
-    // =========================================================
-    // MẸO DEBUG: Thay thế hàm *_neon bằng hàm *_c nếu muốn test logic thuật toán C
-    pack_neon(data_in, &blk);
-    sbox_bs_neon(&blk);
-    mixword_neon(&blk);
-    unpack_neon(&blk, OUT_FWD);
+
+	// ENCRYPT
+	memcpy(data, data_in, 128);
+	encrypt_neon(data, rounds);
 
     int fwd_errors = 0;
-    for(int i = 0; i < 128; i++) if(OUT_FWD[i] != data_out[i]) fwd_errors++;
-    
-    printf("[FORWARD PIPELINE]\n");
+    for(int i = 0; i < 128; i++) if(data[i] != data_out[i]) fwd_errors++;
+
+
+    printf("Encrypt\n");
     if (fwd_errors > 0) {
         printf("Result: FAILED (%d errors)\n", fwd_errors);
-        printf("Data thực tế sau Forward (128 bytes): \n");
+        printf("Data thực tế sau Encrypt (128 bytes): \n");
         for(int i = 0; i < 128; i++){
-            printf("0x%02X,", OUT_FWD[i]);
+            printf("0x%02X,", data[i]);
             if ((i + 1) % 16 == 0) printf("\n"); else printf(" ");
         }
     } else {
-        printf("Result: PASSED (Khớp hoàn toàn với data_out)\n");
+        printf("Result: PASSED\n");
     }
 
-    // =========================================================
-    // 2. BACKWARD PIPELINE (GIẢI MÃ)
-    // data_out -> pack -> inv_mixword -> inv_sbox -> unpack -> OUT_BWD
-    // =========================================================
-    printf("\n[BACKWARD PIPELINE]\n");
-    pack_neon(data_out, &blk);
-    inv_mixword_neon(&blk);
-    inv_sbox_bs_neon(&blk);
-    unpack_neon(&blk, OUT_BWD);
+	// DECRYPT
+	memcpy(data, data_out, 128);
+	decrypt_neon(data, rounds);
 
-    int bwd_errors = 0;
-    for(int i = 0; i < 128; i++) if(OUT_BWD[i] != data_in[i]) bwd_errors++;
-    
-    if (bwd_errors > 0) {
-        printf("Result: FAILED (%d errors)\n", bwd_errors);
+	int bwd_errors = 0;
+    for(int i = 0; i < 128; i++) if(data[i] != data_in[i]) fwd_errors++;
+
+
+	printf("Decrypt\n");
+    if (fwd_errors > 0) {
+        printf("Result: FAILED (%d errors)\n", fwd_errors);
+        printf("Data thực tế sau Decrypt (128 bytes): \n");
+        for(int i = 0; i < 128; i++){
+            printf("0x%02X,", data[i]);
+            if ((i + 1) % 16 == 0) printf("\n"); else printf(" ");
+        }
     } else {
-        printf("Result: PASSED (Khôi phục thành công data_in gốc)\n");
+        printf("Result: PASSED\n");
     }
 
     // =========================================================
     // 3. BENCHMARK TỐC ĐỘ CAO (128 BYTES PER ROUND)
     // =========================================================
-    if (fwd_errors == 0 && bwd_errors == 0) {
-        printf("\nBắt đầu Benchmark (%d vòng lặp - FULL ROUND)...\n", ITERATIONS);
-        
-        clock_t start = clock();
-        
-        pack_neon(data_in, &blk);
+	printf("\n");
+	clock_t start, end;
+	double time_spent, mbps;
+
+	if (fwd_errors != 0 && bwd_errors == 0) {
+		// Encrypt
+        start = clock();
         for(int i = 0; i < ITERATIONS; i++) {
-            // Forward
-            sbox_bs_neon(&blk);
-            mixword_neon(&blk);
-
-            // Backward
-//            inv_mixword_neon(&blk);
-//            inv_sbox_bs_neon(&blk);
+			encrypt_neon(data_in, rounds);
         }
-        unpack_neon(&blk, OUT_FWD);
-        
-        clock_t end = clock();
-        double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
-        
-        // 128 bytes cho FWD + 128 bytes cho BWD = 256 bytes mỗi iteration
-        double bytes_processed = 128.0 * ITERATIONS;
-        double mbps = bytes_processed / (time_spent * 1024 * 1024);
-        
-        printf("Thời gian chạy: %.4f giây\n", time_spent);
-        printf("Tốc độ băng thông (Sbox+Mix+InvMix+InvSbox): %.2f MB/s\n", mbps);
 
+        end = clock();
+        time_spent = (double)(end - start) / CLOCKS_PER_SEC;
+
+        // 128 bytes mỗi iteration
+        mbps = (128.0 * ITERATIONS) / (time_spent * 1024 * 1024);
+
+		printf("Encrypt\n");
+        printf("Thời gian chạy: %.4f giây\n", time_spent);
+        printf("Tốc độ băng thông: %.2f MB/s\n", mbps);
+
+		// Decrypt
+        start = clock();
+        for(int i = 0; i < ITERATIONS; i++) {
+			decrypt_neon(data_in, rounds);
+        }
+
+       end = clock();
+        time_spent = (double)(end - start) / CLOCKS_PER_SEC;
+
+        // 128 bytes mỗi iteration
+        mbps = (128.0 * ITERATIONS) / (time_spent * 1024 * 1024);
+
+		printf("Decrypt\n");
+        printf("Thời gian chạy: %.4f giây\n", time_spent);
+        printf("Tốc độ băng thông: %.2f MB/s\n", mbps);
     } else {
         printf("\n[!] Bỏ qua Benchmark do ASM KERNEL còn lỗi logic.\n");
     }
 
-    return 0;
+
+}
+
+int main(){
+	test();
+	return 0;
 }
